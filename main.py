@@ -456,11 +456,4 @@ async def api_search(
 
 if __name__ == "__main__":
     import uvicorn
-    print("=" * 50)
-    print("启动VMware KB展示系统...")
-    print("访问 http://localhost:8000 查看系统")
-    print("访问 http://localhost:8000/docs 查看API文档")
-    print("=" * 50)
-    print("按 Ctrl+C 停止服务")
-    print("")
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="localhost", port=21000, reload=True)
