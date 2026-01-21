@@ -463,4 +463,4 @@ if __name__ == "__main__":
     print("=" * 50)
     print("按 Ctrl+C 停止服务")
     print("")
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
