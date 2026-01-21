@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VMware Knowledge Base</title>
+    <link href="/static/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="main-wrapper">
+        <div class="main-container">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1>VMware Knowledge Base</h1>
+                <a href="/" class="btn btn-secondary">返回首页</a>
+            </div>
+            
+            <!-- 统计内容 -->
+            <div class="stats-container">
+                <!-- 总体统计 -->
+                <div class="stats-overview">
+                    <div class="stat-item">
+                        <div class="stat-label">KB</div>
+                        <div class="stat-value">{{ total_articles }}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">产品</div>
+                        <div class="stat-value">{{ total_products }}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">最新KB</div>
+                        <div class="stat-value">{{ latest_kb_number }}</div>
+                    </div>
+                </div>
+                
+                <!-- 产品分类统计 -->
+                <div class="stats-products">
+                    <table class="products-table">
+                        <thead>
+                            <tr>
+                                <th>产品</th>
+                                <th>数量</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for stat in product_stats %}
+                            <tr>
+                                <td>{{ stat.name }}</td>
+                                <td>{{ stat.article_count }}</td>
+                            </tr>
+                            {% endfor %}
+                            {% if product_stats|length == 0 %}
+                            <tr>
+                                <td colspan="2" class="text-muted text-center">暂无产品数据</td>
+                            </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="/static/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
+

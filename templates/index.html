@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VMware Knowledge Base</title>
+    <link href="/static/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="main-wrapper">
+        <div class="main-container">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1>VMware Knowledge Base</h1>
+                <a href="/stats" class="btn btn-outline-primary">统计信息</a>
+            </div>
+        
+        <!-- 搜索区域 -->
+        <div class="search-container mb-4">
+            <form method="get" action="/" id="searchForm" class="search-form">
+                <div class="search-input-wrapper">
+                    <input type="text" class="search-input" id="search" name="search" 
+                           value="{{ search }}" placeholder="输入KB号、标题或内容关键词..."
+                           autocomplete="off">
+                    <button type="submit" class="search-button">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <path d="m21 21-4.35-4.35"></path>
+                        </svg>
+                    </button>
+                </div>
+                {% if search %}
+                <div class="search-results-info">
+                    <span class="results-count">共找到 <strong>{{ total }}</strong> 篇文章</span>
+                </div>
+                {% endif %}
+            </form>
+        </div>
+        
+        <!-- KB列表 -->
+        {% if articles %}
+        <div class="article-list">
+            {% for article in articles %}
+            <div class="article-card">
+                <div class="article-header">
+                    <h3 class="article-title">
+                        <a href="/article/{{ article.kb_number }}">KB {{ article.kb_number }}: {{ article.title }}</a>
+                    </h3>
+                    {% if article.updated_date %}
+                    <div class="article-updated">
+                        <span class="updated-value">{{ article.updated_date }}</span>
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="article-meta-list">
+                    <div class="meta-item-list">
+                        {% if article.products %}
+                            {% for product in article.products %}
+                                <span class="product-chip">{{ product.name }}</span>
+                            {% endfor %}
+                        {% else %}
+                            <span class="text-muted">暂无产品</span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        
+        <!-- 分页 -->
+        {% if articles %}
+        <nav aria-label="分页导航" class="mt-4">
+            {% if total_pages > 1 %}
+            <div class="pagination-wrapper">
+                <ul class="pagination mb-0">
+                    {# 首页 #}
+                    {% if page and page > 1 %}
+                    <li class="page-item">
+                        <a class="page-link" href="?{{ build_page_url(1) }}" title="首页">首页</a>
+                    </li>
+                    {% else %}
+                    <li class="page-item disabled">
+                        <span class="page-link">首页</span>
+                    </li>
+                    {% endif %}
+                    
+                    {# 上一页 #}
+                    {% if page and page > 1 %}
+                    <li class="page-item">
+                        <a class="page-link" href="?{{ build_prev_url() }}">上一页</a>
+                    </li>
+                    {% else %}
+                    <li class="page-item disabled">
+                        <span class="page-link">上一页</span>
+                    </li>
+                    {% endif %}
+                    
+                    {# 页码列表 #}
+                    {% for p in pagination_pages %}
+                        {% if p is none %}
+                        <li class="page-item disabled">
+                            <span class="page-link">...</span>
+                        </li>
+                        {% elif p == page %}
+                        <li class="page-item active">
+                            <span class="page-link">{{ p }}</span>
+                        </li>
+                        {% else %}
+                        <li class="page-item">
+                            <a class="page-link" href="?{{ build_page_url(p) }}">{{ p }}</a>
+                        </li>
+                        {% endif %}
+                    {% endfor %}
+                    
+                    {# 下一页 #}
+                    {% if has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?{{ build_next_url() }}">下一页</a>
+                    </li>
+                    {% else %}
+                    <li class="page-item disabled">
+                        <span class="page-link">下一页</span>
+                    </li>
+                    {% endif %}
+                    
+                    {# 尾页 #}
+                    {% if not page or page < total_pages %}
+                    <li class="page-item">
+                        <a class="page-link" href="?{{ build_page_url(total_pages) }}" title="尾页">尾页</a>
+                    </li>
+                    {% else %}
+                    <li class="page-item disabled">
+                        <span class="page-link">尾页</span>
+                    </li>
+                    {% endif %}
+                </ul>
+                
+                {# 页面跳转（同一行，完全对齐） #}
+                <div class="pagination-jump">
+                    <span class="me-2">到</span>
+                    <input type="number" id="jumpPage" class="form-control form-control-sm" style="width: 80px;" min="1" max="{{ total_pages }}" value="{{ page }}">
+                    <span class="mx-2">页</span>
+                    <button type="button" class="btn btn-sm btn-primary" onclick="jumpToPage()">确定</button>
+                </div>
+            </div>
+            {% endif %}
+        </nav>
+        {% endif %}
+        {% else %}
+        <div class="alert alert-info">
+            {% if search %}
+            没有找到匹配的文章
+            {% else %}
+            暂无文章，请先运行爬虫爬取数据
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+    </div>
+    
+    <script src="/static/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // 页面加载完成后自动聚焦到搜索框
+        document.addEventListener('DOMContentLoaded', function() {
+            const searchInput = document.getElementById('search');
+            if (searchInput) {
+                searchInput.focus();
+            }
+        });
+        
+        // 支持回车键搜索
+        document.getElementById('search').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                document.getElementById('searchForm').submit();
+            }
+        });
+        
+        // 页面跳转功能（仅offset分页）
+        function jumpToPage() {
+            const jumpPageInput = document.getElementById('jumpPage');
+            if (!jumpPageInput) return;
+            
+            const targetPage = parseInt(jumpPageInput.value);
+            const totalPages = {{ total_pages }};
+            
+            if (isNaN(targetPage) || targetPage < 1 || targetPage > totalPages) {
+                alert('请输入有效的页码（1-' + totalPages + '）');
+                jumpPageInput.value = {{ page if page else 1 }};
+                return;
+            }
+            
+            // 构建URL
+            const search = '{{ search or "" }}';
+            let url = '?page=' + targetPage;
+            if (search) {
+                url += '&search=' + encodeURIComponent(search);
+            }
+            
+            window.location.href = url;
+        }
+        
+        // 支持回车键跳转
+        const jumpPageInput = document.getElementById('jumpPage');
+        if (jumpPageInput) {
+            jumpPageInput.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    jumpToPage();
+                }
+            });
+        }
+    </script>
+</body>
+</html>
+

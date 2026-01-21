@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KB {{ article.kb_number }} - {{ article.title }}</title>
+    <link href="/static/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="article-wrapper">
+        <div class="article-container-inner">
+            <div class="back-button">
+                <a href="/" class="btn-back">← 返回列表</a>
+            </div>
+            
+            <div class="article-detail">
+                <!-- 标题区域 -->
+                <div class="article-header">
+                    <h1 class="article-title">{{ article.title }}</h1>
+                </div>
+                
+                <!-- 元数据区域 -->
+                <div class="article-meta">
+                    <div class="meta-section">
+                        <span class="meta-label">Article ID</span>
+                        <span class="meta-value">{{ article.article_id or 'N/A' }}</span>
+                    </div>
+                    <div class="meta-section">
+                        <span class="meta-label">Updated On</span>
+                        <span class="meta-value">{{ article.updated_date or 'N/A' }}</span>
+                    </div>
+                    {% if article.url %}
+                    <div class="meta-section">
+                        <a href="{{ article.url }}" target="_blank" class="btn btn-sm btn-outline-primary">查看官方KB</a>
+                    </div>
+                    {% endif %}
+                </div>
+                
+                <!-- 内容区域 -->
+                <div class="article-content">
+                    <div class="content-body">
+                        {% if article.content and article.content.strip() %}
+                            {% if article.content.startswith('<') %}
+                                {{ article.content|safe }}
+                            {% else %}
+                                {% set paragraphs = article.content.split('\n\n') %}
+                                {% for para in paragraphs %}
+                                    {% if para.strip() %}
+                                        <p>{{ para.strip()|replace('\n', '<br>')|safe }}</p>
+                                    {% endif %}
+                                {% endfor %}
+                            {% endif %}
+                        {% else %}
+                            <p class="text-muted">暂无内容</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="/static/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
+
