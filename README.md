@@ -57,7 +57,7 @@ python crawler.py --start 1 --end 1000 --threads 50
 ### 3. 启动Web服务
 
 ```bash
-bash start.sh
+python main.py
 ```
 
 或者直接使用uvicorn：
