@@ -13,7 +13,7 @@ from urllib.parse import urlencode
 import math
 import base64
 
-app = FastAPI(title="VMware KB展示系统")
+app = FastAPI(title="VMware KB展示系统", docs_url=None, redoc_url=None)
 
 # 模板和静态文件
 templates = Jinja2Templates(directory="templates")

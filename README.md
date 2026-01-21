@@ -60,15 +60,7 @@ python crawler.py --start 1 --end 1000 --threads 50
 python main.py
 ```
 
-或者直接使用uvicorn：
-
-```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
-
 访问 `http://localhost:8000` 查看KB列表
-
-访问 `http://localhost:8000/docs` 查看API文档
 
 ## 📁 项目结构
 
