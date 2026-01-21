@@ -60,7 +60,7 @@ python crawler.py --start 1 --end 1000 --threads 50
 python main.py
 ```
 
-访问 `http://localhost:8000` 查看KB列表
+访问 `http://localhost:21000` 查看KB列表
 
 ## 📁 项目结构
 
