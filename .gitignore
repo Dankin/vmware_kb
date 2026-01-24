@@ -59,6 +59,7 @@ desktop.ini
 
 # Project specific
 static/images/kb/
+static/attachments/kb/
 
 # Environment variables
 .env
