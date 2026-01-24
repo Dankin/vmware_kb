@@ -212,19 +212,72 @@ def download_and_localize_attachments(content, kb_number, session=None, soup=Non
     # 方法1: 如果提供了soup对象，查找附件区域
     if soup:
         # 先查找API配置（只需要查找一次）
+        if soup is None:
+            if os.getenv('CRAWLER_DEBUG', 'false').lower() == 'true':
+                print(f"[KB {kb_number}] 警告: soup对象为None，无法查找API配置")
+            return content, {}
+        
         scripts = soup.find_all('script')
         api_domain = None
         kb_download_domain = None
-        for script in scripts:
-            if script.string:
-                if 'var apiDomain' in script.string:
-                    api_match = re.search(r"var apiDomain\s*=\s*['\"]([^'\"]+)['\"]", script.string)
+        
+        debug_mode = os.getenv('CRAWLER_DEBUG', 'false').lower() == 'true'
+        
+        if debug_mode:
+            print(f"[KB {kb_number}] 查找API配置: 找到 {len(scripts)} 个script标签")
+        
+        for i, script in enumerate(scripts):
+            script_content = script.string if script.string else ''
+            
+            if debug_mode and i < 10:  # 只显示前10个script的信息
+                if len(script_content) > 0:
+                    print(f"[KB {kb_number}] Script {i+1}: 长度={len(script_content)}, 包含apiDomain={'apiDomain' in script_content}, 包含kbDownloadDomain={'kbDownloadDomain' in script_content}")
+            
+            if 'apiDomain' in script_content or 'kbDownloadDomain' in script_content:
+                if debug_mode:
+                    print(f"[KB {kb_number}] Script {i+1} 包含API配置相关代码 (长度: {len(script_content)})")
+                    # 显示包含 apiDomain 的行
+                    if 'apiDomain' in script_content:
+                        lines = script_content.split('\n')
+                        for j, line in enumerate(lines):
+                            if 'apiDomain' in line and '=' in line:
+                                print(f"  行 {j+1}: {line.strip()[:150]}")
+                                break
+            
+            # 查找 apiDomain（支持多种格式）
+            if 'apiDomain' in script_content:
+                # 尝试多种匹配模式
+                patterns = [
+                    r"var\s+apiDomain\s*=\s*['\"]([^'\"]+)['\"]",  # var apiDomain = "..."
+                    r"apiDomain\s*[:=]\s*['\"]([^'\"]+)['\"]",  # apiDomain: "..." 或 apiDomain = "..."
+                    r"['\"]apiDomain['\"]\s*:\s*['\"]([^'\"]+)['\"]",  # "apiDomain": "..."
+                ]
+                for pattern in patterns:
+                    api_match = re.search(pattern, script_content, re.IGNORECASE)
                     if api_match:
                         api_domain = api_match.group(1)
-                if 'var kbDownloadDomain' in script.string:
-                    domain_match = re.search(r"var kbDownloadDomain\s*=\s*['\"]([^'\"]+)['\"]", script.string)
+                        if debug_mode:
+                            print(f"[KB {kb_number}] 找到 apiDomain: {api_domain} (模式: {pattern})")
+                        break
+            
+            # 查找 kbDownloadDomain（支持多种格式）
+            if 'kbDownloadDomain' in script_content:
+                patterns = [
+                    r"var\s+kbDownloadDomain\s*=\s*['\"]([^'\"]+)['\"]",  # var kbDownloadDomain = "..."
+                    r"kbDownloadDomain\s*[:=]\s*['\"]([^'\"]+)['\"]",  # kbDownloadDomain: "..." 或 kbDownloadDomain = "..."
+                    r"['\"]kbDownloadDomain['\"]\s*:\s*['\"]([^'\"]+)['\"]",  # "kbDownloadDomain": "..."
+                ]
+                for pattern in patterns:
+                    domain_match = re.search(pattern, script_content, re.IGNORECASE)
                     if domain_match:
                         kb_download_domain = domain_match.group(1)
+                        if debug_mode:
+                            print(f"[KB {kb_number}] 找到 kbDownloadDomain: {kb_download_domain} (模式: {pattern})")
+                        break
+            
+            # 如果都找到了，可以提前退出
+            if api_domain and kb_download_domain:
+                break
         
         # 查找附件下载链接（通过data-uniquefileid属性）
         attachment_download_links = soup.find_all('a', attrs={'data-uniquefileid': True})
@@ -246,8 +299,210 @@ def download_and_localize_attachments(content, kb_number, session=None, soup=Non
                             api_url = f"{api_domain_clean}/es/attachments/download_attachment?domain={kb_download_domain}"
                             # 使用特殊格式标记这是API下载
                             attachment_links.append(f"API_DOWNLOAD:{api_url}:{file_id}:{filename}")
+                        else:
+                            # 如果没有API配置，尝试查找直接下载链接
+                            href = link_elem.get('href', '')
+                            if href and (href.startswith('http://') or href.startswith('https://')):
+                                attachment_links.append(href)
+                            elif not href:
+                                # 如果没有href，尝试从onclick事件中提取URL
+                                onclick = link_elem.get('onclick', '')
+                                if onclick:
+                                    # 尝试从onclick中提取URL
+                                    url_match = re.search(r'["\'](https?://[^"\']+)["\']', onclick)
+                                    if url_match:
+                                        attachment_links.append(url_match.group(1))
         
-        # 方法2: 查找"Attachments"标题下的attachment-container或attachment-card
+        # 方法2: 深入分析JavaScript代码，查找下载函数和附件ID
+        # 查找所有可能的下载函数定义
+        download_functions = []
+        attachment_data = {}  # 存储附件ID到文件名的映射
+        
+        for script in scripts:
+            if script.string:
+                script_content = script.string
+                # 查找 downloadAttachment 函数
+                if 'downloadAttachment' in script_content:
+                    # 尝试提取函数定义和参数
+                    func_match = re.search(r'function\s+downloadAttachment\s*\([^)]*\)\s*\{[^}]*\}', script_content, re.DOTALL)
+                    if func_match:
+                        download_functions.append(func_match.group(0))
+                    
+                    # 查找附件数据（可能在JavaScript对象或数组中）
+                    # 尝试查找包含附件信息的对象
+                    attachment_data_match = re.search(r'attachments?\s*[:=]\s*\[(.*?)\]', script_content, re.DOTALL | re.IGNORECASE)
+                    if attachment_data_match:
+                        # 尝试提取附件数据
+                        pass
+                
+                # 查找可能的附件ID模式（UUID、数字ID等）
+                # 查找 data-* 属性中的ID
+                id_patterns = [
+                    r'["\']([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})["\']',  # UUID
+                    r'["\']([a-f0-9]{32})["\']',  # MD5 hash
+                    r'["\'](\d{10,})["\']',  # 长数字ID
+                ]
+                for pattern in id_patterns:
+                    ids = re.findall(pattern, script_content, re.IGNORECASE)
+                    if ids:
+                        # 尝试将这些ID与附件关联
+                        pass
+        
+        # 方法3: 直接遍历所有attachment-card（即使没有data-uniquefileid）
+        all_attachment_cards = soup.find_all('div', class_=lambda x: x and 'attachment-card' in str(x).lower())
+        for card in all_attachment_cards:
+            # 提取文件名
+            name_elem = card.find('span', class_=lambda x: x and 'attachment-name' in str(x).lower())
+            if not name_elem:
+                # 尝试其他可能的选择器
+                name_elem = card.find(['span', 'div', 'a'], class_=lambda x: x and ('name' in str(x).lower() or 'title' in str(x).lower()))
+            if not name_elem:
+                # 尝试从card的文本内容中提取文件名
+                card_text = card.get_text(strip=True)
+                # 查找可能的文件名（包含扩展名）
+                filename_match = re.search(r'([\w\-_\.]+\.(?:' + '|'.join(file_extensions) + '))', card_text, re.IGNORECASE)
+                if filename_match:
+                    filename = filename_match.group(1)
+                else:
+                    continue
+            else:
+                filename = name_elem.get_text(strip=True)
+            
+            if not filename:
+                continue
+            
+            # 查找下载链接或按钮
+            file_id = None
+            download_url = None
+            
+            # 方法3a: 查找所有data-*属性（可能包含文件ID）
+            for attr_name, attr_value in card.attrs.items():
+                if attr_name.startswith('data-') and attr_value:
+                    # 检查是否是可能的文件ID
+                    if isinstance(attr_value, str) and len(attr_value) > 8:
+                        # 可能是文件ID
+                        if 'file' in attr_name.lower() or 'id' in attr_name.lower():
+                            file_id = attr_value
+                            break
+            
+            # 方法3b: 查找data-uniquefileid（在子元素中）
+            download_link = card.find('a', attrs={'data-uniquefileid': True})
+            if download_link:
+                file_id = download_link.get('data-uniquefileid')
+            
+            # 方法3c: 查找所有data-*属性在下载链接中
+            if not file_id:
+                download_links = card.find_all('a', class_=lambda x: x and 'download' in str(x).lower())
+                for link in download_links:
+                    for attr_name, attr_value in link.attrs.items():
+                        if attr_name.startswith('data-') and attr_value:
+                            if isinstance(attr_value, str) and len(attr_value) > 8:
+                                if 'file' in attr_name.lower() or 'id' in attr_name.lower():
+                                    file_id = attr_value
+                                    break
+                    if file_id:
+                        break
+            
+            # 方法3d: 查找onclick事件中的file_id（在card或子元素中）
+            if not file_id:
+                onclick_elements = card.find_all(attrs={'onclick': True})
+                if not onclick_elements:
+                    # 也检查card本身
+                    if card.get('onclick'):
+                        onclick_elements = [card]
+                
+                for elem in onclick_elements:
+                    onclick = elem.get('onclick', '')
+                    # 尝试从onclick中提取file_id（可能是downloadAttachment(fileId)格式）
+                    file_id_match = re.search(r'downloadAttachment\(["\']?([^"\']+)["\']?\)', onclick, re.IGNORECASE)
+                    if file_id_match:
+                        file_id = file_id_match.group(1)
+                        break
+                    # 尝试提取其他可能的ID（UUID、hash等）
+                    id_patterns = [
+                        r'["\']([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})["\']',  # UUID
+                        r'["\']([a-f0-9]{32})["\']',  # MD5 hash
+                        r'["\'](\d{10,})["\']',  # 长数字ID
+                    ]
+                    for pattern in id_patterns:
+                        id_match = re.search(pattern, onclick, re.IGNORECASE)
+                        if id_match:
+                            file_id = id_match.group(1)
+                            break
+                    if file_id:
+                        break
+            
+            # 方法3e: 从JavaScript代码中查找附件ID（通过文件名匹配）
+            if not file_id and filename:
+                # 在JavaScript代码中搜索包含此文件名的代码
+                for script in scripts:
+                    if script.string and filename in script.string:
+                        # 尝试在文件名附近查找ID
+                        # 查找类似 "filename": "xxx", "id": "yyy" 的模式
+                        pattern = rf'["\']{re.escape(filename)}["\'][^}}]*["\']id["\']\s*:\s*["\']([^"\']+)["\']'
+                        match = re.search(pattern, script.string, re.IGNORECASE)
+                        if match:
+                            file_id = match.group(1)
+                            break
+                        # 或者查找 "id": "xxx", "filename": "yyy" 的模式
+                        pattern = rf'["\']id["\']\s*:\s*["\']([^"\']+)["\'][^}}]*["\']{re.escape(filename)}["\']'
+                        match = re.search(pattern, script.string, re.IGNORECASE)
+                        if match:
+                            file_id = match.group(1)
+                            break
+            
+            # 方法2c: 查找直接下载链接（href）
+            if not download_url:
+                href_links = card.find_all('a', href=True)
+                for link in href_links:
+                    href = link.get('href', '')
+                    if href and (href.startswith('http://') or href.startswith('https://')):
+                        # 检查是否是附件链接
+                        link_lower = href.lower()
+                        if any(link_lower.endswith(f'.{ext}') or f'.{ext}' in link_lower for ext in file_extensions):
+                            download_url = href
+                            break
+            
+            # 调试输出：显示找到的信息
+            debug_mode = os.getenv('CRAWLER_DEBUG', 'false').lower() == 'true'
+            if debug_mode:
+                print(f"[KB {kb_number}] 附件 '{filename}': file_id={file_id}, download_url={download_url}")
+            
+            # 如果找到了file_id和API配置，构建API下载URL
+            if file_id and api_domain and kb_download_domain:
+                api_domain_clean = api_domain.rstrip('/')
+                api_url = f"{api_domain_clean}/es/attachments/download_attachment?domain={kb_download_domain}"
+                attachment_links.append(f"API_DOWNLOAD:{api_url}:{file_id}:{filename}")
+                if debug_mode:
+                    print(f"[KB {kb_number}] 构建API下载URL: {api_url} (file_id: {file_id})")
+            elif download_url:
+                # 使用直接下载链接
+                attachment_links.append(download_url)
+                if debug_mode:
+                    print(f"[KB {kb_number}] 使用直接下载链接: {download_url}")
+            elif file_id:
+                # 有file_id但没有API配置，尝试构建可能的下载URL
+                # 这可能不工作，但值得尝试
+                if api_domain:
+                    api_domain_clean = api_domain.rstrip('/')
+                    # 尝试常见的附件下载路径
+                    possible_urls = [
+                        f"{api_domain_clean}/es/attachments/download_attachment?fileId={file_id}",
+                        f"{api_domain_clean}/attachments/download/{file_id}",
+                        f"{api_domain_clean}/api/attachments/{file_id}",
+                    ]
+                    # 先尝试第一个，如果失败会在下载时处理
+                    attachment_links.append(f"API_DOWNLOAD:{possible_urls[0]}:{file_id}:{filename}")
+                    if debug_mode:
+                        print(f"[KB {kb_number}] 尝试构建下载URL（无domain）: {possible_urls[0]}")
+                else:
+                    if debug_mode:
+                        print(f"[KB {kb_number}] 警告: 找到file_id '{file_id}' 但没有API配置，无法构建下载URL")
+            else:
+                if debug_mode:
+                    print(f"[KB {kb_number}] 警告: 附件 '{filename}' 未找到file_id或下载链接")
+        
+        # 方法3: 查找"Attachments"标题下的attachment-container或attachment-card
         attachment_sections = soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'], 
                                            string=lambda text: text and 'attachment' in text.lower())
         for section in attachment_sections:
@@ -257,36 +512,22 @@ def download_and_localize_attachments(content, kb_number, session=None, soup=Non
                 # 查找attachment-container
                 attachment_containers = parent.find_all('div', class_=lambda x: x and 'attachment-container' in str(x).lower())
                 for container in attachment_containers:
-                    # 查找container内的attachment-card
-                    attachment_cards = container.find_all('div', class_=lambda x: x and 'attachment-card' in str(x).lower())
-                    for card in attachment_cards:
-                        # 查找card内的下载链接（通过data-uniquefileid）
-                        download_link = card.find('a', attrs={'data-uniquefileid': True})
-                        if download_link:
-                            file_id = download_link.get('data-uniquefileid')
-                            # 查找文件名
+                    # 查找container内的attachment-card（如果还没处理过）
+                    container_cards = container.find_all('div', class_=lambda x: x and 'attachment-card' in str(x).lower())
+                    for card in container_cards:
+                        # 检查是否已经处理过（通过检查card是否在all_attachment_cards中）
+                        if card not in all_attachment_cards:
+                            # 使用与方法2相同的逻辑处理
                             name_elem = card.find('span', class_=lambda x: x and 'attachment-name' in str(x).lower())
                             if name_elem:
                                 filename = name_elem.get_text(strip=True)
-                                # 查找API配置
-                                scripts = soup.find_all('script')
-                                api_domain = None
-                                kb_download_domain = None
-                                for script in scripts:
-                                    if script.string:
-                                        if 'var apiDomain' in script.string:
-                                            api_match = re.search(r"var apiDomain\s*=\s*['\"]([^'\"]+)['\"]", script.string)
-                                            if api_match:
-                                                api_domain = api_match.group(1)
-                                        if 'var kbDownloadDomain' in script.string:
-                                            domain_match = re.search(r"var kbDownloadDomain\s*=\s*['\"]([^'\"]+)['\"]", script.string)
-                                            if domain_match:
-                                                kb_download_domain = domain_match.group(1)
-                                
-                                if api_domain and kb_download_domain:
-                                    api_domain = api_domain.rstrip('/')
-                                    api_url = f"{api_domain}/es/attachments/download_attachment?domain={kb_download_domain}"
-                                    attachment_links.append(f"API_DOWNLOAD:{api_url}:{file_id}:{filename}")
+                                download_link = card.find('a', attrs={'data-uniquefileid': True})
+                                if download_link:
+                                    file_id = download_link.get('data-uniquefileid')
+                                    if api_domain and kb_download_domain:
+                                        api_domain_clean = api_domain.rstrip('/')
+                                        api_url = f"{api_domain_clean}/es/attachments/download_attachment?domain={kb_download_domain}"
+                                        attachment_links.append(f"API_DOWNLOAD:{api_url}:{file_id}:{filename}")
                 
                 # 如果没有找到attachment-container，查找直接链接（在Attachments标题下的）
                 if not attachment_containers:
@@ -301,6 +542,62 @@ def download_and_localize_attachments(content, kb_number, session=None, soup=Non
     
     # 去重
     attachment_links = list(set(attachment_links))
+    
+    # 调试输出：显示找到的附件数量
+    if attachment_links:
+        print(f"[KB {kb_number}] 找到 {len(attachment_links)} 个附件链接")
+    else:
+        if soup:
+            # 如果提供了soup但没有找到附件，输出调试信息
+            # 检查是否有附件相关的元素
+            attachment_cards = soup.find_all('div', class_=lambda x: x and 'attachment-card' in str(x).lower())
+            data_uniquefileid_links = soup.find_all('a', attrs={'data-uniquefileid': True})
+            attachment_sections = soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'], 
+                                               string=lambda text: text and 'attachment' in text.lower())
+            attachment_containers = soup.find_all('div', class_=lambda x: x and 'attachment-container' in str(x).lower())
+            
+            # 检查API配置
+            scripts = soup.find_all('script')
+            api_domain = None
+            kb_download_domain = None
+            for script in scripts:
+                if script.string:
+                    if 'var apiDomain' in script.string:
+                        api_match = re.search(r"var apiDomain\s*=\s*['\"]([^'\"]+)['\"]", script.string)
+                        if api_match:
+                            api_domain = api_match.group(1)
+                    if 'var kbDownloadDomain' in script.string:
+                        domain_match = re.search(r"var kbDownloadDomain\s*=\s*['\"]([^'\"]+)['\"]", script.string)
+                        if domain_match:
+                            kb_download_domain = domain_match.group(1)
+            
+            debug_mode = os.getenv('CRAWLER_DEBUG', 'false').lower() == 'true'
+            if debug_mode:
+                print(f"[KB {kb_number}] 调试信息:")
+                print(f"  - attachment-card: {len(attachment_cards)} 个")
+                print(f"  - data-uniquefileid链接: {len(data_uniquefileid_links)} 个")
+                print(f"  - Attachments标题: {len(attachment_sections)} 个")
+                print(f"  - attachment-container: {len(attachment_containers)} 个")
+                print(f"  - apiDomain: {api_domain if api_domain else '未找到'}")
+                print(f"  - kbDownloadDomain: {kb_download_domain if kb_download_domain else '未找到'}")
+                
+                # 输出前2个attachment-card的HTML结构（用于调试）
+                if len(attachment_cards) > 0:
+                    print(f"\n[KB {kb_number}] attachment-card HTML结构示例（前2个）:")
+                    for i, card in enumerate(attachment_cards[:2]):
+                        print(f"\n--- Card {i+1} ---")
+                        # 只输出前500个字符，避免输出过长
+                        card_html = str(card)[:500]
+                        print(card_html)
+                        if len(str(card)) > 500:
+                            print("... (已截断)")
+            else:
+                # 即使不在调试模式，也显示关键信息
+                if len(attachment_cards) > 0 or len(data_uniquefileid_links) > 0:
+                    print(f"[KB {kb_number}] 发现 {len(attachment_cards)} 个attachment-card, {len(data_uniquefileid_links)} 个data-uniquefileid链接，但未找到有效的附件下载链接")
+                    print(f"  提示: 设置 CRAWLER_DEBUG=true 查看详细调试信息")
+        else:
+            print(f"[KB {kb_number}] 警告: 未提供soup对象，无法解析附件")
     
     if not attachment_links:
         return content, {}
@@ -325,81 +622,142 @@ def download_and_localize_attachments(content, kb_number, session=None, soup=Non
                         api_url = rest[:second_last_colon]
                         file_id = rest[second_last_colon+1:last_colon]
                         original_filename = filename_part
-                    # 使用POST请求下载
-                    try:
-                        if session is None:
-                            attach_session = requests.Session()
-                            attach_session.headers.update({
-                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                                'Referer': f'https://knowledge.broadcom.com/external/article/{kb_number}',
-                                'Content-Type': 'application/x-www-form-urlencoded',
-                            })
-                        else:
-                            attach_session = session
-                        
-                        # POST请求，data参数是JSON格式
-                        import json
-                        post_data = {'data': json.dumps({'uniqueFileId': file_id})}
-                        response = attach_session.post(api_url, data=post_data, timeout=30, stream=True, allow_redirects=True)
-                        
-                        if response.status_code == 200:
-                            safe_filename = re.sub(r'[^\w\-_\.]', '_', original_filename)
-                            if not safe_filename:
-                                safe_filename = f"{kb_number}_{hashlib.md5(file_id.encode()).hexdigest()[:8]}.bin"
+                    # 使用POST请求下载（带重试机制）
+                    max_retries = 5
+                    retry_delays = [2, 5, 10, 15, 20]  # 重试延迟（秒）
+                    download_success = False
+                    
+                    safe_filename = re.sub(r'[^\w\-_\.]', '_', original_filename)
+                    if not safe_filename:
+                        safe_filename = f"{kb_number}_{hashlib.md5(file_id.encode()).hexdigest()[:8]}.bin"
+                    
+                    local_path = f"/static/attachments/kb/{kb_number}/{safe_filename}"
+                    filepath = os.path.join(kb_attachment_dir, safe_filename)
+                    
+                    # 如果文件已存在，跳过下载
+                    if os.path.exists(filepath):
+                        attachment_mapping[attach_url] = local_path
+                        continue
+                    
+                    for attempt in range(max_retries):
+                        try:
+                            if session is None:
+                                attach_session = requests.Session()
+                                attach_session.headers.update({
+                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                                    'Referer': f'https://knowledge.broadcom.com/external/article/{kb_number}',
+                                    'Content-Type': 'application/x-www-form-urlencoded',
+                                })
+                            else:
+                                attach_session = session
                             
-                            local_path = f"/static/attachments/kb/{kb_number}/{safe_filename}"
-                            filepath = os.path.join(kb_attachment_dir, safe_filename)
+                            # POST请求，data参数是JSON格式
+                            import json
+                            post_data = {'data': json.dumps({'uniqueFileId': file_id})}
                             
-                            # 如果文件已存在，跳过下载
-                            if os.path.exists(filepath):
-                                attachment_mapping[attach_url] = local_path
-                                continue
+                            # 根据重试次数增加超时时间
+                            timeout = 30 + (attempt * 10)  # 30秒, 40秒, 50秒
                             
-                            # 下载文件（使用stream模式，避免内存问题）
-                            try:
-                                with open(filepath, 'wb') as f:
-                                    downloaded_size = 0
-                                    max_size = 100 * 1024 * 1024  # 限制最大100MB
-                                    first_chunk = True
-                                    
-                                    for chunk in response.iter_content(chunk_size=8192):
-                                        if chunk:
-                                            # 检查第一个chunk是否是HTML错误页面
-                                            if first_chunk:
-                                                first_chunk = False
-                                                chunk_preview = chunk[:100]
-                                                is_html_error = (b'<!DOCTYPE' in chunk_preview or 
-                                                               b'<html' in chunk_preview.lower() or
-                                                               (b'error' in chunk_preview.lower()[:50] and b'<' in chunk_preview))
-                                                if is_html_error:
-                                                    # 是HTML错误页面，停止下载
+                            if attempt > 0:
+                                delay = retry_delays[min(attempt - 1, len(retry_delays) - 1)]
+                                print(f"[KB {kb_number}] 重试下载附件 {safe_filename} (第 {attempt + 1}/{max_retries} 次，等待 {delay} 秒后重试)...")
+                                time.sleep(delay)
+                            
+                            response = attach_session.post(api_url, data=post_data, timeout=timeout, stream=True, allow_redirects=True)
+                            
+                            if response.status_code == 200:
+                                # 下载文件（使用stream模式，避免内存问题）
+                                try:
+                                    with open(filepath, 'wb') as f:
+                                        downloaded_size = 0
+                                        max_size = 100 * 1024 * 1024  # 限制最大100MB
+                                        first_chunk = True
+                                        
+                                        for chunk in response.iter_content(chunk_size=8192):
+                                            if chunk:
+                                                # 检查第一个chunk是否是HTML错误页面
+                                                if first_chunk:
+                                                    first_chunk = False
+                                                    chunk_preview = chunk[:100]
+                                                    is_html_error = (b'<!DOCTYPE' in chunk_preview or 
+                                                                   b'<html' in chunk_preview.lower() or
+                                                                   (b'error' in chunk_preview.lower()[:50] and b'<' in chunk_preview))
+                                                    if is_html_error:
+                                                        # 是HTML错误页面，停止下载
+                                                        f.close()
+                                                        os.remove(filepath)
+                                                        if os.getenv('CRAWLER_DEBUG', 'false').lower() == 'true':
+                                                            print(f"API返回HTML错误页面 (KB {kb_number}, File ID: {file_id})")
+                                                        raise Exception("API返回HTML错误页面")
+                                                
+                                                f.write(chunk)
+                                                downloaded_size += len(chunk)
+                                                if downloaded_size > max_size:
                                                     f.close()
                                                     os.remove(filepath)
                                                     if os.getenv('CRAWLER_DEBUG', 'false').lower() == 'true':
-                                                        print(f"API返回HTML错误页面 (KB {kb_number}, File ID: {file_id})")
-                                                    break
-                                            
-                                            f.write(chunk)
-                                            downloaded_size += len(chunk)
-                                            if downloaded_size > max_size:
-                                                f.close()
-                                                os.remove(filepath)
-                                                if os.getenv('CRAWLER_DEBUG', 'false').lower() == 'true':
-                                                    print(f"文件太大，停止下载 (KB {kb_number}, File ID: {file_id})")
-                                                break
+                                                        print(f"文件太大，停止下载 (KB {kb_number}, File ID: {file_id})")
+                                                    raise Exception("文件太大")
+                                        
+                                    # 下载完成，验证文件大小
+                                    if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+                                        attachment_mapping[attach_url] = local_path
+                                        print(f"[KB {kb_number}] 成功下载附件: {safe_filename} ({os.path.getsize(filepath)} 字节)")
+                                        download_success = True
+                                        break  # 成功，退出重试循环
                                     else:
-                                        # 下载完成，验证文件大小
-                                        if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
-                                            attachment_mapping[attach_url] = local_path
-                            except Exception as e:
-                                # 下载过程中出错
-                                if os.path.exists(filepath):
-                                    os.remove(filepath)
+                                        # 文件大小为0，删除并重试
+                                        if os.path.exists(filepath):
+                                            os.remove(filepath)
+                                        raise Exception("下载的文件大小为0")
+                                        
+                                except Exception as e:
+                                    # 下载过程中出错
+                                    if os.path.exists(filepath):
+                                        os.remove(filepath)
+                                    if attempt < max_retries - 1:
+                                        if os.getenv('CRAWLER_DEBUG', 'false').lower() == 'true':
+                                            print(f"文件下载出错 (KB {kb_number}, File ID: {file_id}, 尝试 {attempt + 1}/{max_retries}): {e}")
+                                        continue  # 继续重试
+                                    else:
+                                        # 最后一次尝试失败
+                                        if os.getenv('CRAWLER_DEBUG', 'false').lower() == 'true':
+                                            print(f"文件下载出错 (KB {kb_number}, File ID: {file_id}): {e}")
+                                        raise
+                            else:
+                                # HTTP状态码不是200
+                                if attempt < max_retries - 1:
+                                    print(f"[KB {kb_number}] API返回状态码 {response.status_code}，将重试...")
+                                    continue
+                                else:
+                                    raise Exception(f"API返回状态码 {response.status_code}")
+                                    
+                        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                            # 超时或连接错误，可以重试
+                            if attempt < max_retries - 1:
                                 if os.getenv('CRAWLER_DEBUG', 'false').lower() == 'true':
-                                    print(f"文件下载出错 (KB {kb_number}, File ID: {file_id}): {e}")
-                    except Exception as e:
-                        if os.getenv('CRAWLER_DEBUG', 'false').lower() == 'true':
-                            print(f"API附件下载失败 (KB {kb_number}, File ID: {file_id}): {e}")
+                                    print(f"API附件下载超时/连接错误 (KB {kb_number}, File ID: {file_id}, 尝试 {attempt + 1}/{max_retries}): {e}")
+                                continue  # 继续重试
+                            else:
+                                # 最后一次尝试失败
+                                print(f"API附件下载失败 (KB {kb_number}, File ID: {file_id}): {e}")
+                                break
+                        except Exception as e:
+                            # 其他错误
+                            if attempt < max_retries - 1:
+                                if os.getenv('CRAWLER_DEBUG', 'false').lower() == 'true':
+                                    print(f"API附件下载出错 (KB {kb_number}, File ID: {file_id}, 尝试 {attempt + 1}/{max_retries}): {e}")
+                                continue  # 继续重试
+                            else:
+                                # 最后一次尝试失败
+                                if os.getenv('CRAWLER_DEBUG', 'false').lower() == 'true':
+                                    print(f"API附件下载失败 (KB {kb_number}, File ID: {file_id}): {e}")
+                                break
+                    
+                    if not download_success:
+                        # 所有重试都失败
+                        if os.path.exists(filepath):
+                            os.remove(filepath)
                 continue
             
             # 普通URL下载
@@ -483,6 +841,7 @@ def download_and_localize_attachments(content, kb_number, session=None, soup=Non
                         # 下载完成，验证文件大小
                         if os.path.getsize(filepath) > 0:
                             attachment_mapping[attach_url] = local_path
+                            print(f"[KB {kb_number}] 成功下载附件: {safe_filename} ({os.path.getsize(filepath)} 字节)")
         except Exception as e:
             # 下载失败，保留原URL
             if os.getenv('CRAWLER_DEBUG', 'false').lower() == 'true':
@@ -718,6 +1077,9 @@ def parse_kb_page(session, kb_number, max_retries=3):
                         products.append(product_name)
         
             # 提取完整内容（保留所有部分：Products、Issue/Introduction、Environment、Resolution、Additional Information）
+            # 保存原始的soup对象（包含script标签），用于附件下载
+            original_soup = BeautifulSoup(response.content, 'html.parser')
+            
             # 移除导航、搜索框、页眉页脚等无关元素
             for tag in soup(["script", "style", "nav", "header", "footer", "aside"]):
                 tag.decompose()
@@ -759,7 +1121,7 @@ def parse_kb_page(session, kb_number, max_retries=3):
             if main_container.get('class') and any('wolken-content-container' in str(c).lower() for c in main_container.get('class', [])):
                 # 直接使用整个container，保留所有card和结构
                 for tag in main_container.find_all(True):
-                    attrs_to_keep = ['class', 'id', 'href', 'src', 'colspan', 'rowspan', 'target', 'rel']
+                    attrs_to_keep = ['class', 'id', 'href', 'src', 'colspan', 'rowspan', 'target', 'rel', 'data-uniquefileid', 'onclick']
                     tag.attrs = {k: v for k, v in tag.attrs.items() if k in attrs_to_keep}
                 content_html = str(main_container)
             
@@ -794,7 +1156,7 @@ def parse_kb_page(session, kb_number, max_retries=3):
                         continue
                     
                     for tag in card_copy.find_all(True):
-                        attrs_to_keep = ['class', 'id', 'href', 'src', 'colspan', 'rowspan', 'target', 'rel']
+                        attrs_to_keep = ['class', 'id', 'href', 'src', 'colspan', 'rowspan', 'target', 'rel', 'data-uniquefileid', 'onclick']
                         tag.attrs = {k: v for k, v in tag.attrs.items() if k in attrs_to_keep}
                     
                     # 如果有标题，去重：保留内容更多的
@@ -828,13 +1190,13 @@ def parse_kb_page(session, kb_number, max_retries=3):
                 if article_content_div:
                     # 清理属性
                     for tag in article_content_div.find_all(True):
-                        attrs_to_keep = ['class', 'id', 'href', 'src', 'colspan', 'rowspan', 'target', 'rel']
+                        attrs_to_keep = ['class', 'id', 'href', 'src', 'colspan', 'rowspan', 'target', 'rel', 'data-uniquefileid', 'onclick']
                         tag.attrs = {k: v for k, v in tag.attrs.items() if k in attrs_to_keep}
                     content_html = str(article_content_div)
                 else:
                     # 使用整个容器
                     for tag in main_container.find_all(True):
-                        attrs_to_keep = ['class', 'id', 'href', 'src', 'colspan', 'rowspan', 'target', 'rel']
+                        attrs_to_keep = ['class', 'id', 'href', 'src', 'colspan', 'rowspan', 'target', 'rel', 'data-uniquefileid', 'onclick']
                         tag.attrs = {k: v for k, v in tag.attrs.items() if k in attrs_to_keep}
                     content_html = str(main_container)
             
@@ -857,17 +1219,21 @@ def parse_kb_page(session, kb_number, max_retries=3):
                     pass
             
             # 下载并本地化附件（默认启用）
+            # 使用原始的soup对象（包含script标签），因为附件下载需要script中的API配置
             if content:
                 try:
-                    content, attachment_mapping = download_and_localize_attachments(content, kb_number, session, soup)
+                    content, attachment_mapping = download_and_localize_attachments(content, kb_number, session, original_soup)
                     if attachment_mapping:
-                        # 记录下载的附件数量（可选）
-                        pass
+                        # 记录下载的附件数量
+                        print(f"[KB {kb_number}] 成功下载 {len(attachment_mapping)} 个附件")
+                    else:
+                        print(f"[KB {kb_number}] 未找到或未下载任何附件")
                 except Exception as e:
-                    # 附件下载失败不影响主流程，只记录警告
+                    # 附件下载失败不影响主流程，但输出警告
+                    print(f"[KB {kb_number}] 附件下载异常: {e}")
                     if os.getenv('CRAWLER_DEBUG', 'false').lower() == 'true':
-                        print(f"附件下载警告 (KB {kb_number}): {e}")
-                    pass
+                        import traceback
+                        traceback.print_exc()
         
             return {
                 'kb_number': kb_number,

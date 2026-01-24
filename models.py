@@ -56,7 +56,14 @@ class Product(Base):
 
 
 # 数据库连接和会话管理
-DATABASE_URL = "sqlite:///kb.db"
+# 获取项目根目录（models.py 所在的目录）
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# 数据库文件路径（使用绝对路径，避免工作目录问题）
+DATABASE_PATH = os.path.join(BASE_DIR, "kb.db")
+# 确保数据库文件所在目录存在
+os.makedirs(os.path.dirname(DATABASE_PATH), exist_ok=True)
+
+DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
 # 禁用WAL模式，使用传统DELETE模式（只生成单个.db文件）
 engine = create_engine(
     DATABASE_URL, 
