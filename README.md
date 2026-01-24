@@ -39,30 +39,28 @@ pip install -r requirements.txt
 
 **爬取单个KB：**
 ```bash
-python crawler.py --kb 308427
+python crawler.py --kb {kb_number}
 ```
 
 **强制重新爬取（即使KB已存在）：**
 ```bash
-python crawler.py --kb 308427 --force
+python crawler.py --kb {kb_number} --force
 ```
 
 **爬取指定范围：**
 ```bash
-python crawler.py --start 1 --end 1000 --threads 50
+python crawler.py --start 1 --end 1000
 ```
 
 **爬取参数说明：**
 - `--kb`: 爬取单个KB号
 - `--start`: 起始KB号
 - `--end`: 结束KB号
-- `--threads`: 线程数（默认50，建议50-100）
 - `--force`: 强制重新爬取（即使KB已存在）
 
 **注意：** 
 - 爬虫默认会自动下载并本地化KB内容中的图片
 - 爬虫会自动下载KB附件区域内的附件（ZIP、PDF、文档等），保存到 `static/attachments/kb/{kb_number}/` 目录
-- 附件下载功能只处理"Attachments"标题下的附件区域，不会下载内容中所有的文件链接
 
 ### 3. 启动Web服务
 
