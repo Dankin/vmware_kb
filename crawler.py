@@ -129,12 +129,12 @@ def download_and_localize_images(content, kb_number, session=None):
     if not external_images:
         return content, {}
     
-    # 创建图片目录
+    image_mapping = {}
+    
+    # 只有在有图片需要下载时才创建目录
     images_dir = 'static/images/kb'
     kb_image_dir = os.path.join(images_dir, str(kb_number))
-    os.makedirs(kb_image_dir, exist_ok=True)
-    
-    image_mapping = {}
+    directory_created = False
     
     for img_url in external_images:
         # 生成文件名
@@ -150,6 +150,11 @@ def download_and_localize_images(content, kb_number, session=None):
         
         # 下载图片
         try:
+            # 只有在需要下载时才创建目录
+            if not directory_created:
+                os.makedirs(kb_image_dir, exist_ok=True)
+                directory_created = True
+            
             if session is None:
                 img_session = requests.Session()
                 img_session.headers.update({
@@ -199,13 +204,13 @@ def download_and_localize_attachments(content, kb_number, session=None, soup=Non
     if not content:
         return content, {}
     
-    # 创建附件目录
-    attachments_dir = 'static/attachments/kb'
-    kb_attachment_dir = os.path.join(attachments_dir, str(kb_number))
-    os.makedirs(kb_attachment_dir, exist_ok=True)
-    
     attachment_mapping = {}
     attachment_links = []
+    
+    # 附件目录路径（只有在有附件需要下载时才创建）
+    attachments_dir = 'static/attachments/kb'
+    kb_attachment_dir = os.path.join(attachments_dir, str(kb_number))
+    directory_created = False
     file_extensions = ['pdf', 'zip', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'rar', '7z', 'tar', 'gz', 'exe', 'msi', 'tar.gz']
     
     # 只处理attachment区域内的附件（不处理内容中所有的文件链接）
@@ -623,13 +628,18 @@ def download_and_localize_attachments(content, kb_number, session=None, soup=Non
                         file_id = rest[second_last_colon+1:last_colon]
                         original_filename = filename_part
                     # 使用POST请求下载（带重试机制）
-                    max_retries = 5
-                    retry_delays = [2, 5, 10, 15, 20]  # 重试延迟（秒）
+                    max_retries = 3
+                    retry_delays = [2, 5, 10]  # 重试延迟（秒）
                     download_success = False
                     
                     safe_filename = re.sub(r'[^\w\-_\.]', '_', original_filename)
                     if not safe_filename:
                         safe_filename = f"{kb_number}_{hashlib.md5(file_id.encode()).hexdigest()[:8]}.bin"
+                    
+                    # 只有在需要下载时才创建目录
+                    if not directory_created:
+                        os.makedirs(kb_attachment_dir, exist_ok=True)
+                        directory_created = True
                     
                     local_path = f"/static/attachments/kb/{kb_number}/{safe_filename}"
                     filepath = os.path.join(kb_attachment_dir, safe_filename)
@@ -655,8 +665,8 @@ def download_and_localize_attachments(content, kb_number, session=None, soup=Non
                             import json
                             post_data = {'data': json.dumps({'uniqueFileId': file_id})}
                             
-                            # 根据重试次数增加超时时间
-                            timeout = 30 + (attempt * 10)  # 30秒, 40秒, 50秒
+                            # 统一超时时间为10秒
+                            timeout = 10
                             
                             if attempt > 0:
                                 delay = retry_delays[min(attempt - 1, len(retry_delays) - 1)]
@@ -805,6 +815,11 @@ def download_and_localize_attachments(content, kb_number, session=None, soup=Non
             safe_filename = re.sub(r'[^\w\-_\.]', '_', original_filename)
             if not safe_filename:
                 safe_filename = f"{kb_number}_{hashlib.md5(attach_url.encode()).hexdigest()[:8]}.bin"
+            
+            # 只有在需要下载时才创建目录
+            if not directory_created:
+                os.makedirs(kb_attachment_dir, exist_ok=True)
+                directory_created = True
             
             local_path = f"/static/attachments/kb/{kb_number}/{safe_filename}"
             filepath = os.path.join(kb_attachment_dir, safe_filename)
