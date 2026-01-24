@@ -77,7 +77,6 @@ vmware_kb/
 ├── crawler.py              # 多线程爬取脚本
 ├── main.py                 # FastAPI Web应用主文件
 ├── models.py               # 数据库模型定义
-├── start.sh                # 启动脚本
 ├── requirements.txt        # Python依赖包
 ├── README.md               # 项目说明文档
 ├── templates/              # HTML模板目录
